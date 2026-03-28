@@ -1,0 +1,211 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+from google.colab import files
+
+# ==============================
+# CLASS: Convolution Processor
+# ==============================
+class ConvolutionProcessor:
+
+    def __init__(self, image_path):
+        self.image_path = image_path
+        self.img = cv2.imread(image_path, 0)
+
+    # 🔹 Core Convolution
+    def convolve(self, kernel, img=None):
+        if img is None:
+            img = self.img
+
+        k_h, k_w = kernel.shape
+        pad_h = k_h // 2
+        pad_w = k_w // 2
+
+        padded = np.pad(img, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+        output = np.zeros_like(img)
+
+        for i in range(img.shape[0]):
+            for j in range(img.shape[1]):
+                region = padded[i:i+k_h, j:j+k_w]
+                output[i, j] = np.sum(region * kernel)
+
+        return np.clip(output, 0, 255).astype(np.uint8)
+
+    # 🔹 Filters
+    def mean_filter(self, img=None):
+        print("✔ Applying Mean Filter")
+        return self.convolve(np.ones((3,3))/9, img)
+
+    def gaussian_filter(self, img=None):
+        print("✔ Applying Gaussian Filter")
+        kernel = np.array([[1,2,1],[2,4,2],[1,2,1]])/16
+        return self.convolve(kernel, img)
+
+    def sharpen_filter(self, img=None):
+        print("✔ Applying Sharpen Filter")
+        kernel = np.array([[0,-1,0],[-1,5,-1],[0,-1,0]])
+        return self.convolve(kernel, img)
+
+    def sobel_filter(self, img=None):
+        print("✔ Applying Sobel Edge Detection")
+
+        sobel_x = np.array([[-1,0,1],[-2,0,2],[-1,0,1]])
+        sobel_y = np.array([[-1,-2,-1],[0,0,0],[1,2,1]])
+
+        gx = self.convolve(sobel_x, img).astype(float)
+        gy = self.convolve(sobel_y, img).astype(float)
+
+        mag = np.sqrt(gx**2 + gy**2)
+        if mag.max() != 0:
+            mag = (mag / mag.max()) * 255
+
+        return mag.astype(np.uint8)
+
+    def laplacian_filter(self, img=None):
+        print("✔ Applying Laplacian Filter")
+        kernel = np.array([[0,1,0],[1,-4,1],[0,1,0]])
+        return self.convolve(kernel, img)
+
+    def custom_kernel(self, img=None):
+        print("✔ Applying Custom Kernel")
+
+        size = int(input("Enter kernel size (odd number): "))
+        print("Enter kernel values:")
+
+        kernel = []
+        for i in range(size):
+            row = list(map(float, input(f"Row {i+1}: ").split()))
+            kernel.append(row)
+
+        kernel = np.array(kernel)
+        print("\nKernel:\n", kernel)
+
+        return self.convolve(kernel, img)
+
+    # 🔹 Display
+    def display(self, img, title):
+        plt.figure(figsize=(6,5))
+        plt.imshow(img, cmap='gray')
+        plt.title(title)
+        plt.axis('off')
+        plt.show()
+
+    # 🔹 Menu (LOOP + PRINTS)
+    def menu(self):
+        while True:
+
+            print("\n" + "="*50)
+            print("🎯 CONVOLUTION FILTER SYSTEM")
+            print("="*50)
+            print("1. Interactive Mode")
+            print("2. Batch Mode")
+            print("0. Exit Program")
+            print("="*50)
+
+            try:
+                mode = int(input("👉 Enter mode: "))
+
+                # EXIT
+                if mode == 0:
+                    print("👋 Exiting Program... Thank you!")
+                    break
+
+                # INTERACTIVE
+                elif mode == 1:
+                    print("✅ Interactive Mode Selected")
+
+                    while True:
+                        print("\n--- INTERACTIVE MENU ---")
+                        print("1. Mean")
+                        print("2. Gaussian")
+                        print("3. Sharpen")
+                        print("4. Sobel")
+                        print("5. Laplacian")
+                        print("6. Custom")
+                        print("0. Back")
+
+                        choice = int(input("👉 Enter choice: "))
+
+                        if choice == 0:
+                            print("↩ Back to Main Menu")
+                            break
+
+                        elif choice == 1:
+                            self.display(self.mean_filter(), "Mean")
+
+                        elif choice == 2:
+                            self.display(self.gaussian_filter(), "Gaussian")
+
+                        elif choice == 3:
+                            self.display(self.sharpen_filter(), "Sharpen")
+
+                        elif choice == 4:
+                            self.display(self.sobel_filter(), "Sobel")
+
+                        elif choice == 5:
+                            self.display(self.laplacian_filter(), "Laplacian")
+
+                        elif choice == 6:
+                            self.display(self.custom_kernel(), "Custom")
+
+                        else:
+                            print("❌ Invalid choice")
+
+                # BATCH
+                elif mode == 2:
+                    print("✅ Batch Mode Selected")
+
+                    choices = input("Enter filters (e.g., 1,2,4): ")
+
+                    result = self.img.copy()
+
+                    print("🚀 Applying filters...")
+
+                    for ch in choices.split(","):
+                        ch = ch.strip()
+
+                        if ch == "1":
+                            result = self.mean_filter(result)
+
+                        elif ch == "2":
+                            result = self.gaussian_filter(result)
+
+                        elif ch == "3":
+                            result = self.sharpen_filter(result)
+
+                        elif ch == "4":
+                            result = self.sobel_filter(result)
+
+                        elif ch == "5":
+                            result = self.laplacian_filter(result)
+
+                        else:
+                            print(f"❌ Invalid: {ch}")
+
+                    print("✔ Done!")
+                    self.display(result, "Final Output")
+
+                else:
+                    print("❌ Invalid mode")
+
+            except ValueError:
+                print("❌ Enter valid number!")
+
+
+# ==============================
+# IMAGE UPLOAD (COLAB)
+# ==============================
+print("📤 Upload your image")
+uploaded = files.upload()
+
+for filename in uploaded.keys():
+    full_path = os.path.abspath(filename)
+
+print("✔ Image uploaded successfully!")
+
+# ==============================
+# RUN PROGRAM
+# ==============================
+obj = ConvolutionProcessor(full_path)
+obj.menu()
