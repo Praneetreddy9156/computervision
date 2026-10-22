@@ -1,251 +1,441 @@
+
+import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 from PIL import Image
-lass GeometricTransformer:
-    def __init__(self, image_path="/content/pic.jpg"):
-        """Initialize with image path - ONLY 4 main geometric transformations"""
+from tkinter import Tk, filedialog
+
+
+# ============================================================
+# IMAGE UPLOAD / SELECTION
+# ============================================================
+
+def upload_image():
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        image_path = filedialog.askopenfilename(
+            title="Select an Image",
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.bmp *.webp"),
+                ("All files", "*.*")
+            ]
+        )
+    finally:
+        root.destroy()
+
+    if not image_path:
+        print("No image selected.")
+        return None
+
+    if cv2.imread(image_path) is None:
+        print("Invalid image file.")
+        return None
+
+    print("Image selected:", image_path)
+    return image_path
+
+
+# ============================================================
+# DISPLAY IMAGE
+# ============================================================
+
+def display_image(image, title, is_cv=False):
+    if is_cv:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    plt.figure(figsize=(8, 6))
+    plt.imshow(image)
+    plt.title(title)
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+
+# ============================================================
+# CLASS 1: GEOMETRIC TRANSFORMATIONS
+# ============================================================
+
+class GeometricTransformer:
+
+    def __init__(self, image_path):
         self.image_path = image_path
-        self.img_pil = Image.open(image_path)
+        self.img_pil = Image.open(image_path).convert("RGB")
         self.img_cv = cv2.imread(image_path)
 
+        if self.img_cv is None:
+            raise ValueError("Unable to read image.")
+
+    # 1. TRANSLATION
     def translate(self, tx=50, ty=30):
-        """TRANSLATION: Shift image using padding/cropping (no affine)"""
+        tx, ty = int(tx), int(ty)
         width, height = self.img_pil.size
 
-        # PIL Translation - Create larger canvas with white background
-        new_img = Image.new("RGB", (width + abs(tx)*2, height + abs(ty)*2), (255, 255, 255))
-        new_img.paste(self.img_pil, (abs(tx), abs(ty)))
-        translated_pil = new_img.crop((tx, ty, tx+width, ty+height))
+        # PIL translation
+        translated_pil = Image.new(
+            "RGB", (width, height), (255, 255, 255)
+        )
+        translated_pil.paste(self.img_pil, (tx, ty))
 
-        # OpenCV Translation - Add padding then crop
+        # OpenCV translation
         rows, cols = self.img_cv.shape[:2]
-        pad_top, pad_bottom = max(ty, 0), max(-ty, 0)
-        pad_left, pad_right = max(tx, 0), max(-tx, 0)
-        padded = cv2.copyMakeBorder(self.img_cv, pad_top, pad_bottom,
-                                   pad_left, pad_right, cv2.BORDER_CONSTANT, value=[255,255,255])
-        translated_cv = padded[pad_top:pad_top+rows, pad_left:pad_left+cols]
+        matrix = np.float32([
+            [1, 0, tx],
+            [0, 1, ty]
+        ])
+
+        translated_cv = cv2.warpAffine(
+            self.img_cv, matrix, (cols, rows),
+            borderValue=(255, 255, 255)
+        )
 
         return translated_pil, translated_cv
 
+    # 2. ROTATION
     def rotate(self, angle=45):
-        """ROTATION: Using built-in rotate methods"""
-        # PIL rotation with automatic canvas expansion
-        rotated_pil = self.img_pil.rotate(angle, expand=True)
+        rotated_pil = self.img_pil.rotate(
+            angle, expand=True,
+            fillcolor=(255, 255, 255)
+        )
 
-        # OpenCV rotation around center
-        h, w = self.img_cv.shape[:2]
-        center = (w//2, h//2)
-        rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated_cv = cv2.warpAffine(self.img_cv, rot_mat, (w, h))
+        rows, cols = self.img_cv.shape[:2]
+        center = (cols / 2, rows / 2)
+
+        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+        cos_a = abs(matrix[0, 0])
+        sin_a = abs(matrix[0, 1])
+
+        new_width = int(rows * sin_a + cols * cos_a)
+        new_height = int(rows * cos_a + cols * sin_a)
+
+        matrix[0, 2] += new_width / 2 - center[0]
+        matrix[1, 2] += new_height / 2 - center[1]
+
+        rotated_cv = cv2.warpAffine(
+            self.img_cv, matrix, (new_width, new_height),
+            borderValue=(255, 255, 255)
+        )
 
         return rotated_pil, rotated_cv
 
+    # 3. SCALING
     def scale(self, scale_x=1.5, scale_y=0.8):
-        """SCALING: Using built-in resize methods"""
-        # PIL resize with Lanczos interpolation (high quality)
-        w, h = self.img_pil.size
-        scaled_pil = self.img_pil.resize((int(w*scale_x), int(h*scale_y)), Image.LANCZOS)
+        if scale_x <= 0 or scale_y <= 0:
+            raise ValueError("Scale factors must be positive.")
 
-        # OpenCV resize (note: OpenCV uses height,width order)
-        h_cv, w_cv = self.img_cv.shape[:2]
-        scaled_cv = cv2.resize(self.img_cv, (int(w_cv*scale_x), int(h_cv*scale_y)),
-                              interpolation=cv2.INTER_LANCZOS4)
+        width, height = self.img_pil.size
+
+        scaled_pil = self.img_pil.resize(
+            (
+                max(1, int(width * scale_x)),
+                max(1, int(height * scale_y))
+            ),
+            Image.Resampling.LANCZOS
+        )
+
+        rows, cols = self.img_cv.shape[:2]
+
+        scaled_cv = cv2.resize(
+            self.img_cv,
+            (
+                max(1, int(cols * scale_x)),
+                max(1, int(rows * scale_y))
+            ),
+            interpolation=cv2.INTER_LANCZOS4
+        )
 
         return scaled_pil, scaled_cv
 
+    # 4. SHEARING
     def shear(self, shear_x=0.3, shear_y=0.2):
-        """SHEAR: Pixel coordinate remapping (no matrix multiplication)"""
-        # Convert PIL to numpy array for pixel manipulation
-        img_array = np.array(self.img_pil)
-        h, w = img_array.shape[:2]
+        width, height = self.img_pil.size
 
-        # Create coordinate grid for every pixel
-        x_indices = np.arange(w)  # 0 to width-1
-        y_indices = np.arange(h)  # 0 to height-1
-        X, Y = np.meshgrid(x_indices, y_indices)  # 2D maps of all coordinates
+        corners = np.float32([
+            [0, 0],
+            [width, 0],
+            [0, height],
+            [width, height]
+        ])
 
-        # Apply shear transformation to coordinates
-        # Horizontal shear: x' = x + shear_x * y
-        # Vertical shear: y' = y + shear_y * x
-        shear_map_x = np.clip(X + shear_x * Y, 0, w-1).astype(np.int32)
-        shear_map_y = np.clip(Y + shear_y * X, 0, h-1).astype(np.int32)
+        matrix = np.float32([
+            [1, shear_x, 0],
+            [shear_y, 1, 0]
+        ])
 
-        # Remap pixels using new coordinates
-        sheared = img_array[shear_map_y, shear_map_x]
+        transformed = corners @ matrix[:, :2].T
+
+        min_x, min_y = transformed.min(axis=0)
+        max_x, max_y = transformed.max(axis=0)
+
+        new_width = max(1, int(np.ceil(max_x - min_x)))
+        new_height = max(1, int(np.ceil(max_y - min_y)))
+
+        matrix[0, 2] = -min_x
+        matrix[1, 2] = -min_y
+
+        sheared = cv2.warpAffine(
+            np.array(self.img_pil),
+            matrix,
+            (new_width, new_height),
+            borderValue=(255, 255, 255)
+        )
+
         return Image.fromarray(sheared)
 
-    def get_transformation(self, choice):
-        """Get single transformation based on user input (1=Translation, 2=Rotation, 3=Scaling, 4=Shear)"""
-        if choice == 1:
-            tx = float(input("Enter translate x: "))
-            ty = float(input("Enter translate y: "))
-            translated_pil, _ = self.translate(tx,ty)
-            return 'Translation', translated_pil
-        elif choice == 2:
-            angle = float(input("Enter rotation angle: "))
-            rotated_pil, _ = self.rotate(angle)
-            return 'Rotation', rotated_pil
-        elif choice == 3:
-            sx = float(input("Enter scale x: "))
-            sy = float(input("Enter scale y: "))
-            scaled_pil, _ = self.scale(sx,sy)
-            return 'Scaling', scaled_pil
-        elif choice == 4:
-            shx = float(input("Enter shear x: "))
-            shy = float(input("Enter shear y: "))
-            return 'Shear', self.shear(shx,shy)
-        else:
-            return 'Invalid choice', self.img_pil
-
+    # MENU
     def interactive_menu(self):
-        """Interactive menu with user input"""
         while True:
-            print("\n" + "="*50)
-            print("🎯 GEOMETRIC TRANSFORMATIONS MENU")
-            print("="*50)
-            print("1. Translation (Shift)")
+            print("\n===== GEOMETRIC TRANSFORMATIONS =====")
+            print("1. Translation")
             print("2. Rotation")
             print("3. Scaling")
             print("4. Shearing")
             print("0. Exit")
-            print("-"*50)
 
             try:
-                choice = int(input("Enter your choice (0-4): "))
+                choice = int(input("Enter choice: "))
 
                 if choice == 0:
-                    print("👋 Goodbye!")
+                    print("Exiting Geometric menu.")
                     break
 
-                name, result_img = self.get_transformation(choice)
+                if choice == 1:
+                    tx = float(input("Enter translation X: "))
+                    ty = float(input("Enter translation Y: "))
+                    result, _ = self.translate(tx, ty)
+                    display_image(result, "Translation")
 
-                if name != 'Invalid choice':
-                    # Display result
-                    plt.figure(figsize=(8, 6))
-                    plt.imshow(result_img)
-                    plt.title(f'{name} Transformation', fontsize=16, fontweight='bold')
-                    plt.axis('off')
-                    plt.tight_layout()
-                    plt.show()
+                elif choice == 2:
+                    angle = float(input("Enter rotation angle: "))
+                    result, _ = self.rotate(angle)
+                    display_image(result, "Rotation")
+
+                elif choice == 3:
+                    sx = float(input("Enter scale X: "))
+                    sy = float(input("Enter scale Y: "))
+                    result, _ = self.scale(sx, sy)
+                    display_image(result, "Scaling")
+
+                elif choice == 4:
+                    shx = float(input("Enter shear X: "))
+                    shy = float(input("Enter shear Y: "))
+                    result = self.shear(shx, shy)
+                    display_image(result, "Shearing")
+
                 else:
-                    print("❌ Invalid choice! Please select 1-4.")
+                    print("Invalid choice. Select 0-4.")
 
-            except ValueError:
-                print("❌ Please enter a valid number!")
-            except KeyboardInterrupt:
-                print("\n👋 Exiting...")
-                break
-lass FlexibleAffine:
+            except (ValueError, OverflowError) as error:
+                print("Invalid input:", error)
+
+
+# ============================================================
+# CLASS 2: AFFINE TRANSFORMATIONS
+# ============================================================
+
+class FlexibleAffine:
 
     def __init__(self, image_path):
         self.image_path = image_path
         self.img = None
         self.rows = None
         self.cols = None
-        self.matrix = np.eye(3)
+        self.matrix = np.eye(3, dtype=np.float64)
 
-    # 1️⃣ Read Image
+    # READ IMAGE
     def read_image(self):
-        self.img = cv2.imread(self.image_path, 0)
-        self.rows, self.cols = self.img.shape
+        self.img = cv2.imread(self.image_path)
 
-    # 2️⃣ Rotation
+        if self.img is None:
+            raise ValueError("Unable to read image.")
+
+        self.rows, self.cols = self.img.shape[:2]
+
+    # ROTATION
     def add_rotation(self, angle):
-        center = (self.cols // 2, self.rows // 2)
-        rot = cv2.getRotationMatrix2D(center, angle, 1)
-        rot = np.vstack([rot, [0,0,1]])
-        self.matrix = rot @ self.matrix
+        center = (self.cols / 2, self.rows / 2)
 
-    # 3️⃣ Scaling
+        rotation = cv2.getRotationMatrix2D(
+            center, angle, 1.0
+        )
+
+        rotation = np.vstack([rotation, [0, 0, 1]])
+        self.matrix = rotation @ self.matrix
+
+    # SCALING
     def add_scaling(self, sx, sy):
-        scale = np.array([[sx,0,0],
-                          [0,sy,0],
-                          [0,0,1]])
+        if sx <= 0 or sy <= 0:
+            raise ValueError("Scale factors must be positive.")
+
+        scale = np.array([
+            [sx, 0, 0],
+            [0, sy, 0],
+            [0, 0, 1]
+        ], dtype=np.float64)
+
         self.matrix = scale @ self.matrix
 
-    # 4️⃣ Shearing
+    # SHEARING
     def add_shearing(self, shx, shy):
-        shear = np.array([[1,shx,0],
-                          [shy,1,0],
-                          [0,0,1]])
+        shear = np.array([
+            [1, shx, 0],
+            [shy, 1, 0],
+            [0, 0, 1]
+        ], dtype=np.float64)
+
         self.matrix = shear @ self.matrix
 
-    # 5️⃣ Translation
+    # TRANSLATION
     def add_translation(self, tx, ty):
-        trans = np.array([[1,0,tx],
-                          [0,1,ty],
-                          [0,0,1]])
-        self.matrix = trans @ self.matrix
+        translation = np.array([
+            [1, 0, tx],
+            [0, 1, ty],
+            [0, 0, 1]
+        ], dtype=np.float64)
 
-    # 6️⃣ Apply Affine
+        self.matrix = translation @ self.matrix
+
+    # APPLY COMBINED TRANSFORMATION
     def apply(self):
-        final_matrix = self.matrix[:2, :]
-        result = cv2.warpAffine(self.img, final_matrix, (self.cols, self.rows))
-        return result
+        corners = np.array([
+            [0, 0, 1],
+            [self.cols, 0, 1],
+            [0, self.rows, 1],
+            [self.cols, self.rows, 1]
+        ], dtype=np.float64)
 
-    # 7️⃣ Display
+        transformed = corners @ self.matrix.T
+
+        min_x, min_y = transformed[:, :2].min(axis=0)
+        max_x, max_y = transformed[:, :2].max(axis=0)
+
+        new_width = max(1, int(np.ceil(max_x - min_x)))
+        new_height = max(1, int(np.ceil(max_y - min_y)))
+
+        matrix = self.matrix[:2, :].copy()
+        matrix[0, 2] -= min_x
+        matrix[1, 2] -= min_y
+
+        return cv2.warpAffine(
+            self.img, matrix,
+            (new_width, new_height),
+            borderValue=(255, 255, 255)
+        )
+
+    # DISPLAY
     def display(self, result):
-        plt.figure(figsize=(8, 6))
-        plt.imshow(result)
-        plt.axis('off')
-        plt.tight_layout()
-        plt.show()
+        display_image(result, "Affine Transformation", is_cv=True)
 
-    # 8️⃣ User Menu Function (NEW)
+    # MENU
     def user_menu(self):
-      while True:
-        print("Choose transformations:")
-        print("1 - Rotation")
-        print("2 - Scaling")
-        print("3 - Shearing")
-        print("4 - Translation")
-        print("5 - Apply All")
-        print("6 - Exit")
+        while True:
+            print("\n===== AFFINE TRANSFORMATIONS =====")
+            print("1. Rotation")
+            print("2. Scaling")
+            print("3. Shearing")
+            print("4. Translation")
+            print("5. Apply All (default values)")
+            print("6. Reset transformations")
+            print("0. Exit")
 
-        choices = input("Enter numbers separated by comma (example: 1,3): ")
+            try:
+                raw = input(
+                    "Enter choices separated by commas: "
+                ).strip()
 
-        if "1" in choices:
-            angle = float(input("Enter rotation angle: "))
-            self.add_rotation(angle)
+                choices = [
+                    int(item.strip())
+                    for item in raw.split(",")
+                ]
 
-        if "2" in choices:
-            sx = float(input("Enter scale x: "))
-            sy = float(input("Enter scale y: "))
-            self.add_scaling(sx, sy)
+                if not choices or any(
+                    choice not in range(0, 7)
+                    for choice in choices
+                ):
+                    print("Choose valid options from 0-6.")
+                    continue
 
-        if "3" in choices:
-            shx = float(input("Enter shear x: "))
-            shy = float(input("Enter shear y: "))
-            self.add_shearing(shx, shy)
+                if 0 in choices:
+                    print("Exiting Affine menu.")
+                    break
 
-        if "4" in choices:
-            tx = float(input("Enter translate x: "))
-            ty = float(input("Enter translate y: "))
-            self.add_translation(tx, ty)
+                if 6 in choices:
+                    self.matrix = np.eye(3, dtype=np.float64)
+                    print("Transformations reset.")
+                    continue
 
-        if "5" in choices:
-            self.add_rotation(30)
-            self.add_scaling(1.2, 1.2)
-            self.add_shearing(0.2, 0)
-            self.add_translation(50, 30)
+                for choice in choices:
+                    if choice == 1:
+                        angle = float(
+                            input("Enter rotation angle: ")
+                        )
+                        self.add_rotation(angle)
 
-        if "6" in choices:
-            break
+                    elif choice == 2:
+                        sx = float(input("Enter scale X: "))
+                        sy = float(input("Enter scale Y: "))
+                        self.add_scaling(sx, sy)
 
-        result = self.apply()
-        self.display(result)
-from google.colab import files
-uploaded = files.upload()
-for filename in uploaded.keys():
-    # Since Colab drops it in the current working directory (/content)
-    full_path = os.path.abspath(filename)
-choice = int(input("Choose Affine or Geometric:\n 1. Affine\n 2. Geometric\n"))
-if choice == 1:
-  obj = FlexibleAffine(full_path)
-  obj.read_image()
-  obj.user_menu()
-elif choice == 2:
-  obj = GeometricTransformer(full_path)
-  obj.interactive_menu()
+                    elif choice == 3:
+                        shx = float(input("Enter shear X: "))
+                        shy = float(input("Enter shear Y: "))
+                        self.add_shearing(shx, shy)
+
+                    elif choice == 4:
+                        tx = float(input("Enter translation X: "))
+                        ty = float(input("Enter translation Y: "))
+                        self.add_translation(tx, ty)
+
+                    elif choice == 5:
+                        self.add_rotation(30)
+                        self.add_scaling(1.2, 1.2)
+                        self.add_shearing(0.2, 0)
+                        self.add_translation(50, 30)
+
+                result = self.apply()
+                self.display(result)
+
+            except (ValueError, OverflowError) as error:
+                print("Invalid input:", error)
+
+
+# ============================================================
+# MAIN PROGRAM
+# ============================================================
+
+def main():
+    print("===== IMAGE TRANSFORMATION PROGRAM =====")
+
+    image_path = upload_image()
+
+    if image_path is None:
+        return
+
+    try:
+        print("\n1. Affine Transformations")
+        print("2. Geometric Transformations")
+
+        choice = int(input("Choose 1 or 2: "))
+
+        if choice == 1:
+            obj = FlexibleAffine(image_path)
+            obj.read_image()
+            obj.user_menu()
+
+        elif choice == 2:
+            obj = GeometricTransformer(image_path)
+            obj.interactive_menu()
+
+        else:
+            print("Invalid choice. Select 1 or 2.")
+
+    except (ValueError, OSError, cv2.error) as error:
+        print("Error:", error)
+
+
+if __name__ == "__main__":
+    main()
